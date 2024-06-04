@@ -30,11 +30,12 @@ Stepper myStepper(stepsPerRevolution, PinStep, PinDir); // Define stepper motor 
 // Create an instance of the INA219 sensor
 Adafruit_INA219 ina;
 #define NUM_SAMPLES 1000 // number of samples to take for the moving average
-const float targetCurrent = 1.0; // target current in milliamps
+ // target current in milliamps
 const float Kp = 1.5; // proportional gain
 const float Ki = 1.5; // integral gain
 const float Kd = 1.0; // derivative gain
-
+float electrode_current = 0.5;
+float targetCurrent = 1.0;
 float error = 0.0;
 float prevError = 0.0;
 float integral = 0.0;
@@ -42,7 +43,7 @@ float derivative = 0.0;
 float pwmValue = 0.0;
 float currentAvg = 0.0;
 float Thickness;
-int Target=40;
+int Target=40;//premiere couche plus diffuse
 bool stop=false;
 
 void setup() {
@@ -118,36 +119,164 @@ void homeZAxis() {
   //myStepper.setCurrentPosition(0);
 }
 ///////////////////////////////////////////////
+void ehome() {
+  bool Stop = false;
+  int consecutiveStopCount = 0;
+  const int consecutiveStopThreshold = 20;
+
+  deactivateAllElectrodes();
+  pinMode(PinCathode, OUTPUT);
+  analogWrite(PinCathode, 128);
+  myStepper.setSpeed(1000); // Set a fast speed once
+
+  // Configure the detection pin
+  const int detectionPin = 23;
+  pinMode(detectionPin, INPUT_PULLUP);
+
+  // Rapidly move the Z-axis down until it hits the endstop
+  while (consecutiveStopCount < consecutiveStopThreshold && digitalRead(PinEndStop) == HIGH) {
+    // Check the detection pin
+    
+    if (digitalRead(detectionPin) == LOW) {
+      if (consecutiveStopCount == 0) {
+        // Log the detection pin only when the first detection occurs
+        Serial.println(detectionPin);
+
+      }
+
+      consecutiveStopCount++;
+    } else {
+      // Reset the consecutive count if detection is not consistent
+          // Move the stepper motor
+      myStepper.step(-4);
+      delay(20);
+      consecutiveStopCount = 0;
+    }
+
+
+  }
+
+  // Set Stop based on the final result
+  Stop = (consecutiveStopCount >= consecutiveStopThreshold);
+
+  if (Stop) {
+    Serial.println("Stop condition confirmed after 20 consecutive detections");
+  } else {
+    
+    Serial.println("Stop condition not confirmed");
+  }
+
+  deactivateAllElectrodes();
+}
+  //myStepper.setCurrentPosition(0);
+
+  /*void ehome() {
+  bool Stop = false;
+  int consecutiveStopCount = 0;
+  const int consecutiveStopThreshold = 10;
+
+  deactivateAllElectrodes();
+  pinMode(PinCathode, OUTPUT);
+  analogWrite(PinCathode, 128);
+  myStepper.setSpeed(1000); // Set a fast speed once
+
+  // Initialize detection pins
+  const int startPort = 14;
+  const int endPort = 52;
+  int detectionPins[endPort - startPort + 1];
+  int numPins = 0;
+
+  // Populate detection pins array while excluding ports 20 and 21
+  for (int port = startPort; port <= endPort; port++) {
+    if (port != 20 && port != 21) {
+      detectionPins[numPins++] = port;
+      pinMode(port, INPUT_PULLUP);
+    }
+  }
+
+  // Rapidly move the Z-axis down until it hits the endstop
+  while (consecutiveStopCount < consecutiveStopThreshold && digitalRead(PinEndStop) == HIGH) {
+    bool detectionOccurred = false;
+
+    // Check each detection pin
+    for (int i = 0; i < numPins; i++) {
+      if (digitalRead(detectionPins[i]) == LOW) {
+        detectionOccurred = true;
+        if (consecutiveStopCount == 0) {
+          // Log the detection pin only when the first detection occurs
+          Serial.print("Detection Pin: ");
+          Serial.println(detectionPins[i]);
+        }
+      }
+    }
+
+    if (detectionOccurred) {
+      consecutiveStopCount++;
+    } else {
+      // Reset the consecutive count if detection is not consistent
+      myStepper.step(-4);
+      delay(20);
+      consecutiveStopCount = 0;
+    }
+  }
+
+  // Set Stop based on the final result
+  Stop = (consecutiveStopCount >= consecutiveStopThreshold);
+
+  if (Stop) {
+    Serial.println("Stop condition confirmed after 10 consecutive detections");
+  } else {
+    Serial.println("Stop condition not confirmed");
+  }
+
+  deactivateAllElectrodes();
+}*/
 
 // Function to send an image via serial and activate corresponding electrodes
 void UpdateMatrix() {
-  int n_electrode;
+  targetCurrent = 0.0;
+  int n_electrode = 0;
   deactivateAllElectrodes();
   // Activate corresponding electrodes based on the received data ex:
-  String message="";// le milieu fonctionne pas
+  //String message="";// le milieu fonctionne pas
+  Serial.println("Please send matrix");
+  String message;
+  while (!Serial.available()) {
+  delay(1); 
+  }   
+
+  message = (Serial.readStringUntil('\n'));
+    
   for (int port = 14; port <= 52; port++) {
-    if (port != 20 && port != 21) {
+    if (port != 20 && port != 21) {//SDA SCL port
     if (message[port-14]=='0'){
-      digitalWrite(port, 0);
+      digitalWrite(port, LOW);
       pinMode(port, INPUT);
     }
     else if (message[port-14]=='1') {
-      pinMode(port, INPUT);
-      digitalWrite(port, 0);
-    }
-    else if (port==52) {
       pinMode(port, OUTPUT);
       digitalWrite(port, HIGH);
+      n_electrode+=1;
+      Serial.println(port);
+      //save active electrode list, then mask out the shorting electrode to continue depositing what missing int the layer.
     }
+    /*else if (port==23) {//no need now
+      pinMode(port, OUTPUT);
+      digitalWrite(port, HIGH);
+      n_electrode+=1;
+    }*/
     else {
       digitalWrite(port, HIGH);
       pinMode(port, INPUT);
     }
-      Serial.print(message[port-14]);
+    
     }
     }
     Serial.println();
     //return n_electrode;//set target current
+    targetCurrent = electrode_current*n_electrode;
+    return targetCurrent;
+    
 }
 
 
@@ -160,7 +289,7 @@ void deactivateAllElectrodes() {
     digitalWrite(pin, LOW);
     pinMode(pin, INPUT);
   }
-  analogWrite(PinCathode, 255);//Turn off Cathode
+  analogWrite(PinCathode, 0);//Turn off Cathode
   pinMode(PinCathode, INPUT);
   digitalWrite(PinFan,LOW);
 
@@ -170,19 +299,21 @@ void(* reset) (void) = 0; //declare reset function @ address 0
 
 ///////////////////////////////////////////////
 void PrintLayers(){
-  for (int i = 0; i < 50; i++) {//height 550µm
+  UpdateMatrix();// One layer test first
+  Serial.println(targetCurrent);
+  for (int i = 0; i < 55; i++) {//height 600µm
           myStepper.setSpeed(1000);
           myStepper.step(+4);
           delay(1);
         }
         Thickness=0;pwmValue=0;currentAvg=0;
-  UpdateMatrix();// One layer test first
+  
   while(1) {
   float currentSum = 0.0;
-  if (Serial.available() || Thickness >=1000) {
+  if (Serial.available() || Thickness >=2000) {
         String message1;
         message1 = Serial.readStringUntil('\n');
-        if (message1.equals("stop")|| Thickness >=1000){
+        if (message1.equals("stop")|| Thickness >=2000){
           Serial.println("Stopped");
           deactivateAllElectrodes();Thickness=0;pwmValue=0;currentAvg=0;
           
@@ -212,15 +343,15 @@ void PrintLayers(){
     Serial.print(",");
     Serial.print("Potentiel(V):");Serial.print(pwmValue/256*5);
     Serial.print(",");
-    Serial.print("Derivee(mA):");Serial.print(derivative);
-    Serial.print(",");
+    //Serial.print("Derivee(mA):");Serial.print(derivative);
+    //Serial.print(",");
     Serial.print("Epaisseur(µm):");Serial.println(Thickness);
     prevError = error;
     delay(933);//time correction
     if (Thickness>Target) {
       myStepper.setSpeed(1000);
       myStepper.step(+4);
-      Target+=40;
+      Target+=20;
   }
  
   }
@@ -228,8 +359,9 @@ void PrintLayers(){
     }
 }
 void Shake(){
-  String message1;
   myStepper.setSpeed(1000);
+  myStepper.step(+1);
+  delay(1);
      for (int i = 0; i < 1000; i++) {//printing 10µm with 1 layers          
           myStepper.step(+4);
           delay(1);  
@@ -251,19 +383,19 @@ void Shake(){
          for (int i = 0; i < 50; i++) {//printing 10µm with 1 layers          
       
           myStepper.step(+4);
-          delay(2);
+          delay(5);
         
           myStepper.step(-4);
-          delay(2);
+          delay(5);
 
       }
-       for (int i = 0; i < 100; i++) {//printing 10µm with 1 layers          
+       for (int i = 0; i < 25; i++) {//printing 10µm with 1 layers          
       
           myStepper.step(+4);
-          delay(1);
+          delay(10);
         
           myStepper.step(-4);
-          delay(1);
+          delay(10);
 
       }
       
@@ -282,6 +414,11 @@ void loop() {
     if (message1.equals("home")) {
       Serial.println("homing");
       homeZAxis();
+      Serial.println("ready");
+    }
+    if (message1.equals("ehome")) {
+      Serial.println("ehoming");
+      ehome();
       Serial.println("ready");
     }
     else if (message1.equals("upi")) {
@@ -308,7 +445,22 @@ void loop() {
       Serial.println("ready");
       }
      
-      
+      else if (message1.equals("down")) {
+      for (int i = 0; i < 8000; i++) {
+        myStepper.setSpeed(1000);
+        myStepper.step(-4);
+        delay(1);
+        if (Serial.available()) {
+        String message1;
+        message1 = Serial.readStringUntil('\n');
+        if (message1.equals("stop")){
+          deactivateAllElectrodes();
+          break;
+        }
+        }
+      }
+      Serial.println("ready");
+      }
       else if (message1.equals("shake")) {
          
           Shake();
