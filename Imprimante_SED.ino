@@ -33,7 +33,7 @@ Adafruit_INA219 ina;
  // target current in milliamps
 
 float targetCurrent = 0.5;
-float electrode_current = .5;
+float electrode_current = 2.1;
 float error = 0.0;
 float prevError = 0.0;
 float integral = 0.0;
@@ -44,7 +44,8 @@ float Thickness;
 int Target=40;//premiere couche plus diffuse
 bool stop=false;
 String matrix="";
-float lheight=4;
+float lheight=10;
+
 void setup() {
   ina.begin();
   // Initialize serial communication
@@ -241,22 +242,23 @@ void(* reset) (void) = 0; //declare reset function @ address 0
 void PrintLayers(){
   UpdateMatrix();// One layer test first
   Serial.println(targetCurrent);
-  for (int i = 0; i < 70*8; i++) {//height 800µm
+  for (int i = 0; i < 86*8; i++) {//height 800µm
           myStepper.setSpeed(1000);
           myStepper.step(+4);
         }
         Thickness=0;pwmValue=0;currentAvg=0;
   int timer=0;
-  float Kp = 1.3/electrode_current/(targetCurrent*0.5); // proportional gain
+  float Kp = 1.5/electrode_current/(targetCurrent*0.5); // proportional gain
   float Ki = 1.3/electrode_current/(targetCurrent*0.5); // integral gain
-  float Kd = 0.4/electrode_current/(targetCurrent*0.5); // derivative gain
+  float Kd = 1.4/electrode_current/(targetCurrent*0.5); // derivative gain
+  int shake=0;
   while(1) {
   float currentSum = 0.0;
   timer+=2;
-  if (Serial.available() || Thickness >=1000) {
+  if (Serial.available() || Thickness >=10000) {
         String message1;
         message1 = Serial.readStringUntil('\n');
-        if (message1.equals("stop")|| Thickness >=1000){
+        if (message1.equals("stop")|| Thickness >=10000){
           Serial.println("Stopped");
           deactivateAllElectrodes();targetCurrent=0;integral=0;derivative=0;Thickness=0;pwmValue=0;currentAvg=0;matrix="";
           
@@ -275,14 +277,17 @@ void PrintLayers(){
     integral += error;
     derivative = error - prevError;
     pwmValue = Kp * error + Ki * integral + Kd * derivative;
-    pwmValue = 255 - constrain(pwmValue, 0, 255);
-    if (currentAvg<targetCurrent*3 || abs(derivative) < 0.5){// ADD A TIMER IF CONSECUTIVE IT MAY BE BECAUSE OF SHORT
+    pwmValue = 200 - constrain(pwmValue,0,110);
+    if (currentAvg<targetCurrent*2.5 || abs(derivative) < 0.5){
     pinMode(PinCathode, OUTPUT);
     if (currentAvg>0){Thickness+=currentAvg*2/(28.74*targetCurrent);}//mA 2s 0.5mm,0.65mm, 28°, 2electrodes
   }
-  else{Shake();Serial.println("Pic de courant");/*for (int i = 0; i <50*8; i++) {//start height 2X250µm+200µm
+  else{Shake();
+  Serial.println("Pic de courant");shake+=1;
+  if (shake>=3){for (int i = 0; i <80*8; i++) {//start height 2X250µm+200µm
           myStepper.setSpeed(1000);
-          myStepper.step(+4);}*/
+          myStepper.step(+4);}
+          shake = 0;}
         }// Montée de 1.25µm
     analogWrite(PinCathode, pwmValue);
     Serial.print("Courant(mA):");Serial.print(currentAvg);
@@ -298,6 +303,7 @@ void PrintLayers(){
       for (int i = 0; i < 1; i++) {
       myStepper.setSpeed(1000);
       myStepper.step(+4);//1.25µm
+      UpdateMatrix();
       }
       Target+=lheight;//1.25µm will80 be smaller for later deposits will get some error estimating height after changed
       //lheight ++ = monte plus lentement//lheight -- = monte plus rapidement
@@ -305,7 +311,7 @@ void PrintLayers(){
  
   }
   else{deactivateAllElectrodes();Thickness=0;pwmValue=0;currentAvg=0;delay(1000);}
-  if (timer>=20 && Thickness>=1){Shake();timer=0;}
+  if (timer>=40 && Thickness>=1){Shake();timer=0;shake=0;}
   if (Thickness>10000 && lheight==1){
     lheight=1.5;
     electrode_current += 0.5;//new growing current
