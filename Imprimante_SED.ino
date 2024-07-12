@@ -47,9 +47,11 @@ String matrix="";
 float lheight=40;
 List<int> active_anode;
 List<int> depositHeights;
-int ieg=90;
+int ieg=80;
 int height = 0;
 int n_electrode=0;
+int eh=0;
+int shake=0;
 void setup() {
   ina.begin();
   // Initialize serial communication
@@ -59,7 +61,7 @@ void setup() {
   pinMode(PinDir, OUTPUT);
   pinMode(PinStep, OUTPUT);
   pinMode(PinEndStop, INPUT_PULLUP);
-  pinMode(PinCathode, INPUT);
+  pinMode(PinCathode, INPUT_PULLUP);
   
   // Enable the stepper 
   pinMode(PinEn, OUTPUT);
@@ -72,7 +74,7 @@ void setup() {
   // Set all electrode array pins as outputs
   for (int pin = ElectrodeStartPin; pin <= ElectrodeEndPin; ++pin) {
     pinMode(pin, OUTPUT);
-    digitalWrite(pin, HIGH);
+    digitalWrite(pin, LOW);
   }
   
   pinMode(10, OUTPUT);
@@ -129,61 +131,65 @@ void ehome() {//RETIRER Update matrix causé par le shake
   int hcount=0;//no need to reset mask because it's already deactivated, here it's just remask
   depositHeights.clear();
   List<int> save_anode;
+  deactivateAllElectrodes();   
   pinMode(PinCathode, OUTPUT);
   analogWrite(PinCathode, 240);
-  for (int i = 0; i < 10*8; i++) {
-    hcount += 1;
-    myStepper.setSpeed(800);
-    myStepper.step(-4);
-
-}
+  for (int i = 0; i < 60*8; i++) {//descend un coup
+              myStepper.setSpeed(800);
+              myStepper.step(-4);
+            }
+  for (int i = 0; i < active_anode.getSize(); i++) {
+  pinMode(active_anode[i], OUTPUT);
+  digitalWrite(active_anode[i], HIGH);
+  Serial.print("next electrode");
+  Serial.println(active_anode[i]);
+  stopDescent=false;
+  delay(2000);
   while (!stopDescent) {
-    for (int i = 0; i < active_anode.getSize(); i++) {
-      if (active_anode[i] != 0) {
+        
         currentSum = 0;
         for (int j = 0; j < 50; j++) {
           currentSum += ina.getCurrent_mA();
         }
+        
         currentAvg = currentSum / 50;
-        if (currentAvg > targetCurrent ) {
-          pinMode(active_anode[i], INPUT);// si masque que le >100
+        if (currentAvg > electrode_current *2 ) {
           depositHeights.add(hcount); // Store the height of the deposit
           Serial.print("Electrode ");
           Serial.print(active_anode[i]);
-          save_anode.add(active_anode[i]);
-          active_anode.remove(i);
-          Serial.print(" Height: ");
+          Serial.print(" Count: ");
           Serial.print(hcount);
           Serial.print("Current Avg: ");
-          Serial.println(currentAvg);
-          for (int j = 0; j < depositHeights.getSize(); j++) {
-          Serial.print(height+ieg-depositHeights[j]);
-          Serial.println();
-        }
-          
-          n_electrode -= 1;
-          if (n_electrode == 0) {
-            stopDescent = true;
-            UpdateMatrix();
-            break;
+          Serial.print(currentAvg);
+          Serial.print(" Height: ");
+          Serial.println(height+ieg-hcount-60*8);
+          stopDescent = true;
+          for (int i = 0; i < hcount; i++) {//remonte
+          myStepper.setSpeed(400);
+          myStepper.step(+4);
+                }
+          hcount=0;
           }
-          else if (hcount > 2000) {
+          else if (hcount > ieg*8) {
             stopDescent = false;
             Serial.println("Not found, trying again");
+            for (int i = 0; i < hcount; i++) {//remonte 
+              myStepper.setSpeed(400);
+              myStepper.step(+4);
+            }
+            Shake();
+            shake+=1;
+            hcount=0;
+            if (shake>=2){stopDescent = true;shake=0;}
+          
           }
-        }
-        else{ hcount += 1;
-    myStepper.setSpeed(800);//descend a step
-    myStepper.step(-4);}
-      }
-      else{break;}
-    }
-
-
-
-    // Recalculate target current
-    targetCurrent = electrode_current * n_electrode;
-
+          else {hcount += 1;
+            myStepper.setSpeed(800);//descend a step
+            myStepper.step(-4);}
+          }
+         pinMode(active_anode[i], INPUT_PULLUP);
+     
+        
     if (Serial.available()) {
       String message1 = Serial.readStringUntil('\n');
       if (message1.equals("stop")) {
@@ -191,17 +197,20 @@ void ehome() {//RETIRER Update matrix causé par le shake
         break;
       }
     }
-
-  }
-
-  // Go back to working distance
-   for (int i = 0; i < hcount; i++) {//height 800µm
-          myStepper.setSpeed(800);
-          myStepper.step(+4);
-        }
+    
+    }
+    // Go back to working distance
+    for (int i = 0; i < 60*8; i++) {//remonte en haut
+              myStepper.setSpeed(800);
+              myStepper.step(+4);
+              
+            }
   Serial.println("Descent stopped");
-return depositHeights;
+  UpdateMatrix();
+  return depositHeights;
+  delay(1000);
 }
+      
 
 
 // Function to send an image via serial and activate corresponding electrodes
@@ -211,6 +220,7 @@ void UpdateMatrix() {
   active_anode.clear();  
 
   deactivateAllElectrodes();
+  pinMode(PinCathode, OUTPUT);
   // Activate corresponding electrodes based on the received data ex:
   //String message="";// le milieu fonctionne pas
   if (matrix==""){
@@ -225,7 +235,7 @@ void UpdateMatrix() {
   for (int port = 14; port <= 53; port++) {
     if (port != 20 && port != 21) {//SDA SCL port
     if (matrix[port-14]=='0'){
-      pinMode(port, INPUT);
+      pinMode(port, INPUT_PULLUP);
     }
     else if (matrix[port-14]=='1') {
       pinMode(port, OUTPUT);
@@ -241,7 +251,7 @@ void UpdateMatrix() {
     }*/
     else {
       digitalWrite(port, HIGH);
-      pinMode(port, INPUT);
+      pinMode(port, INPUT_PULLUP);
     }
     
     }
@@ -249,19 +259,21 @@ void UpdateMatrix() {
     
     for(int i=0; i<depositHeights.getSize();i++){
       if (depositHeights[i]>=height){
-      pinMode(active_anode[i], INPUT);
+      pinMode(active_anode[i], INPUT_PULLUP);
+      depositHeights.remove(i);
       n_electrode-=1;
       Serial.print(active_anode[i]);
       }
     }
-    for(int i=0; i<active_anode.getSize();i++){
-    Serial.print(String(active_anode[i]));
-    }
+    
     Serial.println();
     //return n_electrode;//set target current
     targetCurrent = electrode_current*n_electrode;
     
     Serial.println(n_electrode);
+    pinMode(PinCathode, OUTPUT);
+    delay(500);
+    
     return targetCurrent;
 }
 
@@ -272,11 +284,11 @@ void UpdateMatrix() {
 void deactivateAllElectrodes() {
   // Turn off all electrode array pins
   for (int pin = ElectrodeStartPin; pin <= ElectrodeEndPin; ++pin) {
-    digitalWrite(pin, LOW);
-    pinMode(pin, INPUT);
+    digitalWrite(pin,HIGH);
+    pinMode(pin, INPUT_PULLUP);
   }
-  analogWrite(PinCathode, 0);//Turn off Cathode
-  pinMode(PinCathode, INPUT);
+  digitalWrite(PinCathode,HIGH);
+  pinMode(PinCathode, INPUT_PULLUP);
   digitalWrite(PinFan,LOW);
 
 
@@ -288,6 +300,15 @@ void Shake(){
      for (int i = 0; i < 6000; i++) {//printing 10µm with 1 layers          
           myStepper.step(+4);  
       }
+      myStepper.setSpeed(80);
+      for (int i = 0; i < 16; i++) {//printing 10µm with 1 layers          
+      
+          myStepper.step(+4);
+        
+          myStepper.step(-4);
+
+      }
+      myStepper.setSpeed(3000);
       for (int i = 0; i < 6000; i++) {//printing 10µm with 1 layers          
           myStepper.step(-4);   
       }
@@ -315,6 +336,7 @@ void Shake(){
 
       }
       UpdateMatrix(); 
+      delay(1000);
       }    
 ///////////////////////////////////////////////
 void PrintLayers(){
@@ -329,10 +351,12 @@ void PrintLayers(){
   float Kp = 1/electrode_current/(targetCurrent*0.5); // proportional gain
   float Ki = 1.3/electrode_current/(targetCurrent*0.5); // integral gain
   float Kd = 0.4/electrode_current/(targetCurrent*0.5); // derivative gain
-  int shake=0;
+  
+  delay(1000);
   while(1) {
   float currentSum = 0.0;
   timer+=2;
+  delay(400);
   if (Serial.available() || Thickness >=10000) {
         String message1;
         message1 = Serial.readStringUntil('\n');
@@ -359,15 +383,22 @@ void PrintLayers(){
     derivative = error - prevError;
     pwmValue = Kp * error + Ki * integral + Kd * derivative;
     pwmValue = 220 - constrain(pwmValue,0,235);
-    if (currentAvg<targetCurrent*2 || abs(derivative) < 0.5){
-    pinMode(PinCathode, OUTPUT);
+    if (abs(derivative) < 20){
     if (currentAvg>0){Thickness+=currentAvg*2/(28.74*targetCurrent);}//mA 2s 0.5mm,0.65mm, 28°, 2electrodes
   }
-  else{Shake();
+  else{
   Serial.println("Pic de courant");shake+=1;
   }
-  if (shake>=2){
+  if (shake==2){//contact
+  Shake();
+  Serial.println("shake");
+  shake=0;
         }// Montée de 20µm
+  if (shake>2){//contact
+  ehome();
+  Serial.println("ehome");
+  shake=0;
+        }
     analogWrite(PinCathode, pwmValue);
     Serial.print("Courant(mA):");Serial.print(currentAvg);
     Serial.print(",");
@@ -377,7 +408,7 @@ void PrintLayers(){
     //Serial.print(",");
     Serial.print("Epaisseur(µm):");Serial.println(Thickness);
     prevError = error;
-    delay(933);//time correction
+    delay(333);//time correction
     if (Thickness>Target) {
       for (int i = 0; i < 1; i++) {
       myStepper.setSpeed(1000);
@@ -393,10 +424,13 @@ void PrintLayers(){
   else{deactivateAllElectrodes();Thickness=0;pwmValue=0;currentAvg=0;delay(1000);}
   if (timer>=50 &&Thickness>=1){Shake();
   timer=0;shake=0;}
-  if (Thickness>200){
-  ehome();
+
+  if (Thickness>eh){
+    eh+=200;
   UpdateMatrix();
-        
+  ehome();
+  Serial.print("bravo");
+  delay(1000);   
   }
 
   /*if (Thickness>100 && lheight==0.25){//TWICE
